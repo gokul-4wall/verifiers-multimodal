@@ -44,6 +44,7 @@ dependencies = [
     "torch>=2.8.0",
     "vllm>=0.11.0",
     "accelerate>=1.11.0",
+    "peft>=0.18.0",
 ]
 
 [dependency-groups]

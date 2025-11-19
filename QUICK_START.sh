@@ -1,0 +1,30 @@
+#!/bin/bash
+# Quick start script for multimodal trainer testing
+# Run this in two terminals
+
+echo "=========================================="
+echo "Multimodal Trainer - Quick Start"
+echo "=========================================="
+echo ""
+echo "IMPORTANT: Run these commands in TWO separate terminals"
+echo ""
+echo "Terminal 1 - Start vLLM Server:"
+echo "  cd /home/antim/gokul/verifiers-multimodal"
+echo "  source .venv/bin/activate"
+echo "  NCCL_P2P_DISABLE=1 uv run vf-vllm \\"
+echo "    --model Qwen/Qwen3-VL-8B-Instruct \\"
+echo "    --port 8000 \\"
+echo "    --max-model-len 8192 \\"
+echo "    --enforce-eager"
+echo ""
+echo "Terminal 2 - Run Trainer (after vLLM starts):"
+echo "  cd /home/antim/gokul/verifiers-multimodal"
+echo "  source .venv/bin/activate"
+echo "  NCCL_P2P_DISABLE=1 python scripts/vf-train-multimodal.py @ configs/vf-rl/test-multimodal.toml"
+echo ""
+echo "Key Points:"
+echo "  - Both processes MUST use NCCL_P2P_DISABLE=1"
+echo "  - Wait for vLLM to show 'Uvicorn running' before starting trainer"
+echo "  - First run will download ~16GB model (Qwen3-VL-8B)"
+echo ""
+

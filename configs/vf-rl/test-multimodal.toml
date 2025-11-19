@@ -1,0 +1,54 @@
+# Test configuration for multimodal training
+# Uses a simple dummy environment with colored images
+
+model = "Qwen/Qwen3-VL-8B-Instruct"
+
+[env]
+# Use the test environment (loaded via python path)
+id = "test_env_multimodal"  # Python module name
+
+[env.args]
+num_examples = 5  # Small number for quick testing
+
+[inference]
+gpus = 1
+
+[inference.args]
+enforce_eager = true
+max_model_len = 2048
+# For VLMs - using inline table syntax
+# limit_mm_per_prompt = {image = 1}  # Commented out - vLLM arg format differs
+
+[trainer]
+gpus = 1
+
+[trainer.args]
+run_name = "test-multimodal-qwen3vl"
+output_dir = "./outputs/test-multimodal"
+
+# Small values for quick testing
+learning_rate = 1e-5
+max_steps = 3  # Just 3 steps to test
+batch_size = 5
+micro_batch_size = 5
+rollouts_per_step = 5
+
+# GRPO clipping
+mask_ratio_low = 0.1
+mask_ratio_high = 10.0
+temperature = 1.0
+
+# vLLM config
+vllm_server_host = "0.0.0.0"
+vllm_server_port = 8000
+
+# Rollout config
+max_concurrent = 5
+generation_timeout = 300.0
+
+# Weight syncing - disabled for testing
+sync_to_vllm_every = 999999  # Effectively disabled
+
+# Logging
+log_every_steps = 1
+

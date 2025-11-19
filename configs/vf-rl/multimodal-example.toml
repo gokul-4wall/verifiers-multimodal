@@ -1,0 +1,56 @@
+# Configuration for Qwen3-VL-8B-Instruct multimodal training
+# This follows the same pattern as the text-only trainer configs
+
+model = "Qwen/Qwen3-VL-8B-Instruct"
+
+[env]
+id = "your-multimodal-env"  # Replace with your actual environment
+
+[env.args]
+# Add any environment-specific args here
+# min_turns = 3
+# max_turns = 5
+
+[inference]
+gpus = 1
+
+[inference.args]
+enforce_eager = true
+# Add vLLM-specific args for vision models
+# max_model_len = 8192
+# limit_mm_per_prompt = {"image": 4}
+
+[trainer]
+gpus = 1
+
+[trainer.args]
+# MultimodalRLConfig parameters
+run_name = "qwen3-vl-8b-training"
+output_dir = "./outputs/multimodal"
+learning_rate = 1e-5
+max_steps = 100
+batch_size = 512
+micro_batch_size = 4
+rollouts_per_step = 16
+
+# GRPO clipping
+mask_ratio_low = 0.1
+mask_ratio_high = 10.0
+
+# Temperature for trainer logprobs
+temperature = 1.0
+
+# vLLM server config
+vllm_server_host = "0.0.0.0"
+vllm_server_port = 8000
+
+# Rollout config
+max_concurrent = 128
+generation_timeout = 600.0
+
+# Weight syncing (0 = offline RL, 1+ = online RL)
+sync_to_vllm_every = 1
+
+# Logging
+log_every_steps = 10
+

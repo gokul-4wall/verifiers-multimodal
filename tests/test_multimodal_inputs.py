@@ -3,8 +3,12 @@ import pytest
 # These tests are only meaningful when `transformers` is installed.
 pytest.importorskip("transformers")
 
-from multimodal_rl.config import MultimodalRLConfig
-from multimodal_rl.trainer import MultimodalAdapter, MultimodalBatch, MultimodalGRPOTrainer
+from verifiers.rl.trainer.multimodal import (
+    MultimodalAdapter,
+    MultimodalBatch,
+    MultimodalGRPOTrainer,
+    MultimodalRLConfig,
+)
 
 
 def _make_trainer_for_unit_tests(
