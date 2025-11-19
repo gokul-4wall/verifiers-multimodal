@@ -52,19 +52,39 @@ class DummyMultimodalEnv(SingleTurnEnv):
         # Create rubric with reward function (standard pattern)
         rubric = Rubric()
         
-        def color_reward_func(completion, state, **kwargs) -> float:
+        def color_reward_func(completion, answer, **kwargs) -> float:
             """Reward if correct color is mentioned."""
-            correct_color = state["color"].lower()
-            completion_lower = completion.lower()
+            # Handle answer being a list or string
+            if isinstance(answer, list):
+                correct_color = answer[0].lower() if answer else ""
+            else:
+                correct_color = answer.lower()
+            
+            # Handle completion being a dict (message format), list, or string
+            if isinstance(completion, dict):
+                completion_text = completion.get("content", "")
+            elif isinstance(completion, list):
+                # If list of dicts (messages)
+                if completion and isinstance(completion[0], dict):
+                    completion_text = completion[0].get("content", "")
+                else:
+                    completion_text = completion[0] if completion else ""
+            else:
+                completion_text = completion
+            
+            completion_lower = str(completion_text).lower()
             return 1.0 if correct_color in completion_lower else 0.0
         
         rubric.add_reward_func(color_reward_func)
         
         # Initialize parent (same as text-only envs)
+        # Format dataset to add prompt column (required by base class)
         super().__init__(
             dataset=dataset,
             rubric=rubric,
             message_type="chat",
+            question_key="question",  # Specify which column has the question
+            answer_key="answer",  # Specify which column has the answer
             **kwargs
         )
     
@@ -74,6 +94,7 @@ class DummyMultimodalEnv(SingleTurnEnv):
             "color": [],
             "image": [],
             "question": [],
+            "answer": [],  # Required by verifiers base class
         }
         
         for i in range(self.num_examples):
@@ -83,6 +104,7 @@ class DummyMultimodalEnv(SingleTurnEnv):
             data["color"].append(color)
             data["image"].append(image)
             data["question"].append("What color is in this image? Describe it.")
+            data["answer"].append(color)  # Ground truth answer
         
         return Dataset.from_dict(data)
     
@@ -96,11 +118,30 @@ class DummyMultimodalEnv(SingleTurnEnv):
         ]
     
     def get_state(self, row: dict[str, Any]) -> dict[str, Any]:
-        """Return state with image (standard verifiers pattern)."""
+        """Return state with image and color for reward function."""
         return {
-            "color": row["color"],
+            "color": row["color"],  # Ground truth for reward
             "image": row["image"],  # PIL Image
         }
+    
+    async def init_state(
+        self,
+        prompt: list[dict],
+        completion: list[dict],
+        answer: str,
+        task: str,
+        info: dict,
+        example_id: int,
+        **kwargs
+    ) -> dict:
+        """Initialize state with color from dataset row."""
+        state = await super().init_state(prompt, completion, answer, task, info, example_id, **kwargs)
+        # Add custom state fields from the dataset row if available
+        if "color" in kwargs:
+            state["color"] = kwargs["color"]
+        if "image" in kwargs:
+            state["image"] = kwargs["image"]
+        return state
 
 
 def load_environment(**kwargs):

@@ -174,11 +174,12 @@ class Qwen3VLAdapter(MultimodalAdapter):
             
             # TODO: Extract actual logprobs from vLLM response
             # This depends on how your vLLM is configured to return logprobs
-            completion_tokens = len(self.tokenizer.encode(completion_data))
-            if completion_tokens > 0:
-                # Fill in the completion portion with dummy values
-                # Replace with actual vLLM logprobs extraction
-                behavior_logprobs[i, -completion_tokens:] = torch.randn(completion_tokens)
+            if completion_data and isinstance(completion_data, str):
+                completion_tokens = len(self.tokenizer.encode(completion_data))
+                if completion_tokens > 0:
+                    # Fill in the completion portion with dummy values
+                    # Replace with actual vLLM logprobs extraction
+                    behavior_logprobs[i, -completion_tokens:] = torch.randn(completion_tokens)
         
         return behavior_logprobs
     

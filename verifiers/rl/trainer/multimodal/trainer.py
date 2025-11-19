@@ -121,10 +121,11 @@ class MultimodalGRPOTrainer:
             from transformers import AutoModelForImageTextToText
             import torch
             print(f"Loading VLM: {model}")
+            # Match text-only pattern: no device_map, let manual .to(device) handle it
             model = AutoModelForImageTextToText.from_pretrained(
                 model,
                 torch_dtype=torch.bfloat16,
-                device_map="auto",
+                # No device_map - we'll move to device manually below
             )
         
         if tokenizer is None:
@@ -152,8 +153,15 @@ class MultimodalGRPOTrainer:
             group_port=self.config.vllm_server_group_port,
             connection_timeout=self.config.vllm_server_timeout,
         )
-        # initialize NCCL communicator for weight updates
-        self.vllm_client.init_communicator()
+        # initialize NCCL communicator for weight updates (lazy init on first sync)
+        # Only init if we're actually going to sync weights
+        if self.config.sync_to_vllm_every > 0:
+            try:
+                self.vllm_client.init_communicator()
+            except Exception as e:
+                print(f"Warning: Failed to initialize NCCL communicator: {e}")
+                print("Weight syncing will be disabled. Training will continue without syncing to vLLM.")
+                self.config.sync_to_vllm_every = 0
 
         # standard optimizer; users can swap this out if needed
         self.optimizer = AdamW(
@@ -201,6 +209,7 @@ class MultimodalGRPOTrainer:
         )
 
         try:
+            # Explicitly pass color and image columns to state for reward function
             outputs = await env.a_generate(
                 ds_slice,
                 client=client,
@@ -212,6 +221,7 @@ class MultimodalGRPOTrainer:
                 max_concurrent=self.config.max_concurrent,
                 max_concurrent_generation=None,
                 max_concurrent_scoring=None,
+                state_columns=["color", "image"],  # Pass to state for reward function
             )
         finally:
             await client.close()
