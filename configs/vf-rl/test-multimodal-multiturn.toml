@@ -1,14 +1,15 @@
-# Test configuration for multimodal training
-# Uses a simple dummy environment with colored images
+# Test configuration for multi-turn multimodal training
+# Uses a simple dummy environment with colored images and multiple turns
 
 model = "Qwen/Qwen3-VL-8B-Instruct"
 
 [env]
-# Use the test environment (loaded via python path)
-id = "test_env_multimodal"  # Python module name
+# Use the multi-turn test environment (loaded via python path)
+id = "test_env_multimodal_multiturn"  # Python module name
 
 [env.args]
 num_examples = 1  # Single example for observation
+max_turns = 3  # Max 3 guesses per image
 
 [inference]
 gpus = 1
@@ -16,15 +17,13 @@ gpus = 1
 [inference.args]
 enforce_eager = true
 max_model_len = 2048
-# For VLMs - using inline table syntax
-# limit_mm_per_prompt = {image = 1}  # Commented out - vLLM arg format differs
 
 [trainer]
 gpus = 1
 
 [trainer.args]
-run_name = "test-multimodal-qwen3vl"
-output_dir = "./outputs/test-multimodal"
+run_name = "test-multimodal-multiturn-qwen3vl"
+output_dir = "./outputs/test-multimodal-multiturn"
 
 # Small values for quick testing
 learning_rate = 1e-5

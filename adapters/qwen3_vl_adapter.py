@@ -31,28 +31,52 @@ class Qwen3VLAdapter(MultimodalAdapter):
         super().__init__(tokenizer)
         self.processor = processor
         
-    def _load_image(self, image_data: str) -> Image.Image:
+    def _load_image(self, image_data: str | Image.Image | dict | None) -> Image.Image:
         """
-        Load image from URL, file path, or base64 string.
+        Load image from URL, file path, base64 string, PIL Image, or dict.
         
         Args:
-            image_data: URL, file path, or base64 encoded image
+            image_data: URL, file path, base64 encoded image, PIL Image, or dict (HF datasets format)
             
         Returns:
             PIL Image
         """
-        if image_data.startswith('http://') or image_data.startswith('https://'):
-            # Load from URL
-            response = requests.get(image_data)
-            image = Image.open(BytesIO(response.content))
-        elif image_data.startswith('data:image'):
-            # Base64 encoded image
-            image_data = image_data.split(',')[1]
-            image_bytes = base64.b64decode(image_data)
-            image = Image.open(BytesIO(image_bytes))
+        # If already a PIL Image, just ensure it's RGB
+        if isinstance(image_data, Image.Image):
+            image = image_data
+        elif image_data is None or (isinstance(image_data, dict) and not image_data):
+            # Handle None or empty dict - return a dummy image
+            return Image.new('RGB', (224, 224), color='white')
+        elif isinstance(image_data, dict):
+            # Handle dict (HuggingFace datasets sometimes serialize PIL Images to dicts)
+            # This happens when PIL Images are stored in the info column
+            # Try to extract the image if it's in a known format
+            if 'bytes' in image_data:
+                # HF format with bytes
+                image = Image.open(BytesIO(image_data['bytes']))
+            elif 'path' in image_data:
+                # HF format with path
+                image = Image.open(image_data['path'])
+            else:
+                # Unknown dict format - log and return dummy
+                print(f"Warning: Unknown image dict format with keys: {list(image_data.keys())}")
+                return Image.new('RGB', (224, 224), color='white')
+        elif isinstance(image_data, str):
+            if image_data.startswith('http://') or image_data.startswith('https://'):
+                # Load from URL
+                response = requests.get(image_data)
+                image = Image.open(BytesIO(response.content))
+            elif image_data.startswith('data:image'):
+                # Base64 encoded image
+                image_data_split = image_data.split(',')[1]
+                image_bytes = base64.b64decode(image_data_split)
+                image = Image.open(BytesIO(image_bytes))
+            else:
+                # File path
+                image = Image.open(image_data)
         else:
-            # File path
-            image = Image.open(image_data)
+            # Unknown type, return dummy
+            return Image.new('RGB', (224, 224), color='white')
         
         # Convert to RGB if needed
         if image.mode != 'RGB':

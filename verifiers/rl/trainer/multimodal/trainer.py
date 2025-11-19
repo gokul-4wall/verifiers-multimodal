@@ -209,7 +209,6 @@ class MultimodalGRPOTrainer:
         )
 
         try:
-            # Explicitly pass color and image columns to state for reward function
             outputs = await env.a_generate(
                 ds_slice,
                 client=client,
@@ -221,7 +220,6 @@ class MultimodalGRPOTrainer:
                 max_concurrent=self.config.max_concurrent,
                 max_concurrent_generation=None,
                 max_concurrent_scoring=None,
-                state_columns=["color", "image"],  # Pass to state for reward function
             )
         finally:
             await client.close()

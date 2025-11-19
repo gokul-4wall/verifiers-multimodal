@@ -243,6 +243,83 @@ class LLaVAAdapter(MultimodalAdapter):
 
 ---
 
+## vLLM Setup for Multimodal Models
+
+**CRITICAL:** When using vLLM as the behavior policy for multimodal training, you **must** start the vLLM server with the `--limit-mm-per-prompt` flag to enable image processing through the OpenAI-compatible API.
+
+### Starting vLLM for Vision Models
+
+```bash
+# For models that use 1 image per prompt (most common):
+vf-vllm \
+  --model Qwen/Qwen3-VL-8B-Instruct \
+  --port 8000 \
+  --gpu-memory-utilization 0.3 \
+  --limit-mm-per-prompt '{"image": 1}'
+
+# For models that support multiple images per prompt:
+vf-vllm \
+  --model Qwen/Qwen2-VL-7B-Instruct \
+  --port 8000 \
+  --limit-mm-per-prompt '{"image": 4}'
+
+# For video models:
+vf-vllm \
+  --model Qwen/Qwen2-VL-2B-Instruct \
+  --port 8000 \
+  --limit-mm-per-prompt '{"image": 16, "video": 1}'
+```
+
+### Image Format for vLLM
+
+vLLM expects images in OpenAI's vision API format with base64-encoded data URIs:
+
+```python
+import base64
+from io import BytesIO
+from PIL import Image
+
+# Create/load image
+image = Image.open("path/to/image.jpg")
+
+# Encode as base64
+buffered = BytesIO()
+image.save(buffered, format="PNG")
+img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+# Format for vLLM
+messages = [{
+    "role": "user",
+    "content": [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{img_base64}"
+            }
+        },
+        {
+            "type": "text",
+            "text": "What's in this image?"
+        }
+    ]
+}]
+```
+
+**Note:** The `image_url` field must be a **dict with a `url` key**, not a direct string. vLLM's validation will reject direct strings.
+
+### Troubleshooting
+
+**Model says "I can't see images":**
+- ✅ Check vLLM was started with `--limit-mm-per-prompt '{"image": N}'`
+- ✅ Verify image format uses nested dict: `{"image_url": {"url": "data:..."}}`
+- ✅ Ensure base64 encoding is correct (test with small sample)
+
+**400 Bad Request - validation error:**
+- ❌ Using `image_url: "data:..."` (direct string)
+- ✅ Use `image_url: {"url": "data:..."}` (nested dict)
+
+---
+
 ## Usage Example
 
 ```python
