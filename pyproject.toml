@@ -40,6 +40,10 @@ dependencies = [
     "tomli; python_version < '3.11'",
     "prime-sandboxes>=0.2.2",
     "wget>=3.2",
+    "transformers>=4.57.1",
+    "torch>=2.8.0",
+    "vllm>=0.11.0",
+    "accelerate>=1.11.0",
 ]
 
 [dependency-groups]
