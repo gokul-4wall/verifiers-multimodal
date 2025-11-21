@@ -1008,3 +1008,165 @@ class Environment(ABC):
 
     # alias for process_env_results_vllm
     process_env_results = process_env_results_vllm
+
+    def process_env_results_vllm_multimodal(
+        self,
+        prompts: list[Messages],
+        completions: list[Messages],
+        states: list[State],
+        rewards: list[float],
+        adapter: "MultimodalAdapter",
+        max_seq_len: int = -1,
+        mask_truncated_completions: bool = False,
+        zero_truncated_completions: bool = False,
+    ) -> ProcessedOutputs:
+        """
+        Process multimodal results using an adapter.
+        
+        This method processes multimodal rollouts (with images) using a model-specific
+        adapter. The adapter handles image loading, tokenization, and model-specific
+        formatting (e.g., Qwen-VL's image_grid_thw).
+        
+        Args:
+            prompts: List of prompt messages
+            completions: List of completion messages
+            states: List of state dictionaries (may contain image data)
+            rewards: List of reward values
+            adapter: MultimodalAdapter instance for model-specific processing
+            max_seq_len: Maximum sequence length for truncation
+            mask_truncated_completions: Whether to mask truncated completions
+            zero_truncated_completions: Whether to zero rewards for truncated completions
+            
+        Returns:
+            ProcessedOutputs with token IDs, masks, logprobs, and optional multimodal data
+        """
+        from verifiers.types import GenerateOutputs, GenerateMetadata
+        
+        # Convert inputs to GenerateOutputs (adapter expects this format)
+        generate_outputs = GenerateOutputs(
+            prompt=prompts,
+            completion=completions,
+            state=states,
+            reward=rewards,
+            answer=[""] * len(prompts),
+            task=["default"] * len(prompts),
+            info=[{}] * len(prompts),
+            example_id=list(range(len(prompts))),
+            metadata=GenerateMetadata(
+                env_id=self.env_id,
+                env_args=self.env_args,
+                model="",
+                base_url="",
+                num_examples=len(prompts),
+                rollouts_per_example=1,
+                sampling_args={},
+                date="",
+                time_ms=0.0,
+                avg_reward=0.0,
+                avg_metrics={},
+                state_columns=[],
+                path_to_save="",
+            ),
+        )
+        
+        # Use adapter to build batch
+        mm_batch = adapter.build_batch(generate_outputs)
+        
+        # Convert MultimodalBatch to ProcessedOutputs
+        all_prompt_ids = []
+        all_prompt_masks = []
+        all_completion_ids = []
+        all_completion_masks = []
+        all_completion_logprobs = []
+        all_rewards = []
+        all_is_truncated = []
+        all_pixel_values = []
+        all_image_grid_thw = []
+        
+        batch_size = len(mm_batch.input_ids)
+        for i in range(batch_size):
+            # Get full sequence from adapter
+            input_ids = mm_batch.input_ids[i].tolist()
+            loss_mask = mm_batch.loss_mask[i].tolist()
+            behavior_logprobs = mm_batch.behavior_logprobs[i].tolist()
+            
+            # Split into prompt vs completion
+            # Find where assistant response starts (where loss_mask becomes 1)
+            completion_start = next(
+                (idx for idx, mask in enumerate(loss_mask) if mask == 1),
+                len(input_ids) // 2,  # Fallback to midpoint if no mask found
+            )
+            
+            prompt_ids = input_ids[:completion_start]
+            prompt_mask = [0] * len(prompt_ids)  # Don't train on prompt
+            completion_ids = input_ids[completion_start:]
+            completion_mask = loss_mask[completion_start:]
+            completion_logprobs = behavior_logprobs[completion_start:]
+            
+            # Handle truncation (shared logic with text processing)
+            is_truncated = False
+            if max_seq_len > 0 and len(prompt_ids) + len(completion_ids) > max_seq_len:
+                if len(prompt_ids) > max_seq_len:
+                    prompt_ids = prompt_ids[:max_seq_len]
+                    prompt_mask = prompt_mask[:max_seq_len]
+                max_completion_len = max_seq_len - len(prompt_ids)
+                if max_completion_len > 0:
+                    completion_ids = completion_ids[:max_completion_len]
+                    completion_mask = completion_mask[:max_completion_len]
+                    completion_logprobs = completion_logprobs[:max_completion_len]
+                is_truncated = True
+            
+            if is_truncated and mask_truncated_completions:
+                completion_mask = [0] * len(completion_ids)
+            
+            # Validate lengths
+            assert len(prompt_ids) == len(prompt_mask), (
+                f"Prompt ids: {len(prompt_ids)}, prompt mask: {len(prompt_mask)}"
+            )
+            assert len(completion_ids) == len(completion_mask), (
+                f"Completion ids: {len(completion_ids)}, completion mask: {len(completion_mask)}"
+            )
+            assert (
+                len(completion_mask) == len(completion_ids) == len(completion_logprobs)
+            ), (
+                f"completion mask: {len(completion_mask)}, completion ids: {len(completion_ids)}, completion logprobs: {len(completion_logprobs)}"
+            )
+            
+            all_prompt_ids.append(prompt_ids)
+            all_prompt_masks.append(prompt_mask)
+            all_completion_ids.append(completion_ids)
+            all_completion_masks.append(completion_mask)
+            all_completion_logprobs.append(completion_logprobs)
+            
+            # Handle rewards
+            if zero_truncated_completions and is_truncated:
+                all_rewards.append(0.0)
+                all_is_truncated.append(True)
+            else:
+                all_rewards.append(mm_batch.rewards[i].item())
+                all_is_truncated.append(False)
+            
+            # Extract multimodal data
+            if mm_batch.pixel_values is not None:
+                all_pixel_values.append(mm_batch.pixel_values[i])
+            
+            if "image_grid_thw" in mm_batch.extra_model_kwargs:
+                # Handle image_grid_thw (could be per-sample or batched)
+                grid_thw = mm_batch.extra_model_kwargs["image_grid_thw"]
+                if isinstance(grid_thw, list) and len(grid_thw) > i:
+                    all_image_grid_thw.append(grid_thw[i])
+                elif isinstance(grid_thw, torch.Tensor):
+                    all_image_grid_thw.append(grid_thw[i])
+        
+        return ProcessedOutputs(
+            prompt_ids=all_prompt_ids,
+            prompt_mask=all_prompt_masks,
+            completion_ids=all_completion_ids,
+            completion_mask=all_completion_masks,
+            completion_logprobs=all_completion_logprobs,
+            rewards=all_rewards,
+            is_truncated=all_is_truncated,
+            pixel_values=all_pixel_values if all_pixel_values else None,
+            image_grid_thw=all_image_grid_thw if all_image_grid_thw else None,
+            extra_model_kwargs=mm_batch.extra_model_kwargs,
+        )

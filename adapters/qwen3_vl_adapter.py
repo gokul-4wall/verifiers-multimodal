@@ -207,9 +207,37 @@ class Qwen3VLAdapter(MultimodalAdapter):
         
         return behavior_logprobs
     
+    def _extract_image_from_prompt(self, prompt: List[dict]) -> str | None:
+        """
+        Extract image URL/data from prompt content (for MMMU-style prompts).
+        
+        Args:
+            prompt: List of message dicts with potential image content
+            
+        Returns:
+            Image URL/data string or None
+        """
+        for msg in prompt:
+            if isinstance(msg, dict) and 'content' in msg:
+                content = msg['content']
+                # Handle list of content parts (MMMU format)
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get('type') == 'image_url':
+                            # Extract from {"type": "image_url", "image_url": {"url": "..."}}
+                            image_url_obj = part.get('image_url', {})
+                            if isinstance(image_url_obj, dict):
+                                return image_url_obj.get('url')
+                            return image_url_obj
+        return None
+    
     def build_batch(self, outputs: GenerateOutputs) -> MultimodalBatch:
         """
         Convert verifiers GenerateOutputs into MultimodalBatch for Qwen3-VL.
+        
+        Supports multiple image sources:
+        1. state['image_url'] or state['image'] (direct state)
+        2. Embedded in prompt content (MMMU-style)
         
         Args:
             outputs: GenerateOutputs containing prompts, completions, states, rewards
@@ -219,11 +247,20 @@ class Qwen3VLAdapter(MultimodalAdapter):
         """
         batch_size = len(outputs.prompt)
         
-        # 1. Load images from states
+        # 1. Load images from states OR prompts
         images = []
-        for state in outputs.state:
-            # Assumes state has 'image_url' or 'image' key
+        for i, state in enumerate(outputs.state):
+            image_data = None
+            
+            # Try to get image from state first
             image_data = state.get('image_url') or state.get('image')
+            
+            # If not in state, try extracting from prompt content (MMMU format)
+            if not image_data:
+                prompt = outputs.prompt[i]
+                if isinstance(prompt, list):
+                    image_data = self._extract_image_from_prompt(prompt)
+            
             if image_data:
                 images.append(self._load_image(image_data))
             else:

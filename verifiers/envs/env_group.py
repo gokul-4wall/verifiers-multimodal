@@ -341,6 +341,98 @@ class EnvGroup(Environment):
             is_truncated=all_is_truncated,
         )
 
+    def process_env_results_vllm_multimodal(
+        self,
+        prompts: list[Messages],
+        completions: list[Messages],
+        states: list[State],
+        rewards: list[float],
+        adapter: "MultimodalAdapter",
+        max_seq_len: int = -1,
+        mask_truncated_completions: bool = False,
+        zero_truncated_completions: bool = False,
+    ) -> ProcessedOutputs:
+        """Route multimodal vLLM result processing to the appropriate sub-environment."""
+        num_samples = len(prompts)
+        assert (
+            len(completions) == num_samples
+            and len(states) == num_samples
+            and len(rewards) == num_samples
+        ), (
+            f"Mismatch in lengths of prompts, completions, states, or rewards: {len(prompts)}, {len(completions)}, {len(states)}, {len(rewards)}"
+        )
+        
+        all_prompt_ids = [[] for _ in range(num_samples)]
+        all_prompt_masks = [[] for _ in range(num_samples)]
+        all_completion_ids = [[] for _ in range(num_samples)]
+        all_completion_masks = [[] for _ in range(num_samples)]
+        all_completion_logprobs = [[] for _ in range(num_samples)]
+        all_rewards = [0.0] * num_samples
+        all_is_truncated = [False] * num_samples
+        all_pixel_values = [None] * num_samples
+        all_image_grid_thw = [None] * num_samples
+        
+        # Keep track of extra_model_kwargs (will merge from sub-envs)
+        merged_extra_kwargs = {}
+
+        # Group indices by task
+        env_indices = defaultdict(list)
+        for idx, state in enumerate(states):
+            task = state.get("task")
+            env_indices[task].append(idx)
+
+        # Process results for each task
+        for task, indices in env_indices.items():
+            env = self.get_env_for_task(task)
+            env_processed_outputs = env.process_env_results_vllm_multimodal(
+                [prompts[i] for i in indices],
+                [completions[i] for i in indices],
+                [states[i] for i in indices],
+                [rewards[i] for i in indices],
+                adapter,
+                max_seq_len=max_seq_len,
+                mask_truncated_completions=mask_truncated_completions,
+                zero_truncated_completions=zero_truncated_completions,
+            )
+            
+            # Map processed outputs back to original indices
+            for i, original_idx in enumerate(indices):
+                all_prompt_ids[original_idx] = env_processed_outputs.prompt_ids[i]
+                all_prompt_masks[original_idx] = env_processed_outputs.prompt_mask[i]
+                all_completion_ids[original_idx] = env_processed_outputs.completion_ids[i]
+                all_completion_masks[original_idx] = env_processed_outputs.completion_mask[i]
+                all_completion_logprobs[original_idx] = env_processed_outputs.completion_logprobs[i]
+                all_rewards[original_idx] = env_processed_outputs.rewards[i]
+                all_is_truncated[original_idx] = env_processed_outputs.is_truncated[i]
+                
+                # Handle multimodal fields
+                if env_processed_outputs.pixel_values is not None and i < len(env_processed_outputs.pixel_values):
+                    all_pixel_values[original_idx] = env_processed_outputs.pixel_values[i]
+                
+                if env_processed_outputs.image_grid_thw is not None and i < len(env_processed_outputs.image_grid_thw):
+                    all_image_grid_thw[original_idx] = env_processed_outputs.image_grid_thw[i]
+            
+            # Merge extra_model_kwargs from this sub-env
+            if env_processed_outputs.extra_model_kwargs:
+                merged_extra_kwargs.update(env_processed_outputs.extra_model_kwargs)
+        
+        # Filter out None values from multimodal fields
+        pixel_values_result = [pv for pv in all_pixel_values if pv is not None]
+        image_grid_thw_result = [igt for igt in all_image_grid_thw if igt is not None]
+        
+        return ProcessedOutputs(
+            prompt_ids=all_prompt_ids,
+            prompt_mask=all_prompt_masks,
+            completion_ids=all_completion_ids,
+            completion_mask=all_completion_masks,
+            completion_logprobs=all_completion_logprobs,
+            rewards=all_rewards,
+            is_truncated=all_is_truncated,
+            pixel_values=pixel_values_result if pixel_values_result else None,
+            image_grid_thw=image_grid_thw_result if image_grid_thw_result else None,
+            extra_model_kwargs=merged_extra_kwargs,
+        )
+
     def get_env_for_task(self, task: str) -> Environment:
         """Get the environment instance for a given task name."""
         return self.env_map.get(task, self.envs[0])

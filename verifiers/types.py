@@ -112,6 +112,10 @@ class ProcessedOutputs(BaseModel):
     completion_logprobs: list[list[float]]
     rewards: list[float]
     is_truncated: list[bool]
+    # Optional multimodal fields
+    pixel_values: list[Any] | None = None
+    image_grid_thw: list[Any] | None = None
+    extra_model_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
 Endpoint = TypedDict("Endpoint", {"key": str, "url": str, "model": str})
