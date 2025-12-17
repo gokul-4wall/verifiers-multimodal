@@ -95,7 +95,7 @@ class Qwen3VLAdapter(MultimodalAdapter):
     def _format_conversation(
         self, 
         prompt: List[dict], 
-        completion: str,
+        completion: str | List[dict],
         image: Image.Image
     ) -> List[dict]:
         """
@@ -123,22 +123,45 @@ class Qwen3VLAdapter(MultimodalAdapter):
                     'content': msg['content']
                 })
         
+        def _content_to_text(content: object) -> str:
+            # OpenAI-style multimodal: content is a list of parts
+            if isinstance(content, list):
+                parts: list[str] = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        t = part.get("text")
+                        if isinstance(t, str) and t:
+                            parts.append(t)
+                    elif isinstance(part, str) and part:
+                        parts.append(part)
+                return "\n".join(parts).strip()
+            if isinstance(content, str):
+                return content.strip()
+            return str(content).strip()
+
+        def _completion_to_text(comp: str | List[dict]) -> str:
+            if isinstance(comp, str):
+                return comp
+            # If completion is message list, take assistant content(s)
+            texts: list[str] = []
+            for msg in comp:
+                if isinstance(msg, dict) and msg.get("role") == "assistant":
+                    texts.append(_content_to_text(msg.get("content")))
+            return "\n".join([t for t in texts if t]).strip()
+
         # Add user message with image
-        user_content = []
-        
-        # Add image first
-        user_content.append({
-            'type': 'image',
-            'image': image
-        })
-        
-        # Add text from user messages
+        user_content: list[dict] = [
+            {"type": "image", "image": image},
+        ]
+
+        # Add text from user messages (handle multimodal content parts)
+        user_texts: list[str] = []
         for msg in prompt:
-            if msg['role'] == 'user':
-                user_content.append({
-                    'type': 'text',
-                    'text': msg['content']
-                })
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                user_texts.append(_content_to_text(msg.get("content")))
+        user_text = "\n".join([t for t in user_texts if t]).strip()
+        if user_text:
+            user_content.append({"type": "text", "text": user_text})
         
         messages.append({
             'role': 'user',
@@ -148,7 +171,7 @@ class Qwen3VLAdapter(MultimodalAdapter):
         # Add assistant completion
         messages.append({
             'role': 'assistant',
-            'content': completion
+            'content': _completion_to_text(completion)
         })
         
         return messages

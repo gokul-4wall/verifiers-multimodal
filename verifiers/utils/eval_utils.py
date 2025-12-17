@@ -1,8 +1,11 @@
+import base64
 import importlib.util
 import json
 import logging
+import re
 import time
 from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 from typing import cast
 
@@ -18,6 +21,108 @@ from verifiers.utils.message_utils import messages_to_printable, sanitize_tool_c
 from verifiers.utils.path_utils import get_eval_results_path
 
 logger = logging.getLogger(__name__)
+
+
+def extract_images_from_prompt(prompt: list[dict]) -> list[bytes]:
+    """Extract base64-encoded images from a prompt message list.
+    
+    Returns list of image bytes (PNG/JPEG data).
+    """
+    images = []
+    for message in prompt:
+        content = message.get("content", [])
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "image_url":
+                    image_url = item.get("image_url", {})
+                    url = image_url.get("url", "")
+                    # Handle base64 data URLs
+                    if url.startswith("data:image"):
+                        # Extract base64 data after the comma
+                        match = re.match(r"data:image/\w+;base64,(.+)", url)
+                        if match:
+                            try:
+                                image_data = base64.b64decode(match.group(1))
+                                images.append(image_data)
+                            except Exception as e:
+                                logger.warning(f"Failed to decode base64 image: {e}")
+    return images
+
+
+def save_rollout_with_images(
+    results: GenerateOutputs,
+    path_to_save: Path,
+    save_images: bool = True,
+):
+    """Save rollouts with images to a structured directory.
+    
+    Creates:
+        path_to_save/
+            metadata.json
+            results.jsonl
+            images/
+                rollout_0000.png
+                rollout_0001.png
+                ...
+            rollouts/
+                rollout_0000.txt
+                rollout_0001.txt
+                ...
+    """
+    path_to_save.mkdir(parents=True, exist_ok=True)
+    
+    # Create subdirectories
+    images_dir = path_to_save / "images"
+    rollouts_dir = path_to_save / "rollouts"
+    
+    if save_images:
+        images_dir.mkdir(exist_ok=True)
+    rollouts_dir.mkdir(exist_ok=True)
+    
+    # Use prompt_raw for display if available (contains actual data, not pydantic validators)
+    raw_prompts = results.prompt_raw if results.prompt_raw else results.prompt
+    clean_prompts = [messages_to_printable(p) for p in raw_prompts]
+    clean_completions = [messages_to_printable(c) for c in results.completion]
+    
+    logger.debug(f"save_rollout_with_images: prompt_raw is {'set' if results.prompt_raw else 'None'}, using {'prompt_raw' if results.prompt_raw else 'prompt'}")
+    
+    for i, (prompt, prompt_raw, completion, reward, answer, example_id) in enumerate(zip(
+        clean_prompts,
+        raw_prompts,
+        clean_completions,
+        results.reward,
+        results.answer,
+        results.example_id,
+    )):
+        rollout_id = f"rollout_{i:04d}"
+        
+        # Save image if present
+        if save_images:
+            images = extract_images_from_prompt(prompt_raw)
+            logger.debug(f"Rollout {i}: extracted {len(images)} images from prompt_raw")
+            for j, img_data in enumerate(images):
+                suffix = f"_{j}" if len(images) > 1 else ""
+                img_path = images_dir / f"{rollout_id}{suffix}.png"
+                with open(img_path, "wb") as f:
+                    f.write(img_data)
+        
+        # Save rollout text
+        rollout_text = f"""=== Rollout {i} ===
+Example ID: {example_id}
+Reward: {reward}
+Answer: {answer}
+
+--- PROMPT ---
+{prompt}
+
+--- COMPLETION ---
+{completion}
+"""
+        rollout_path = rollouts_dir / f"{rollout_id}.txt"
+        with open(rollout_path, "w") as f:
+            f.write(rollout_text)
+    
+    logger.info(f"Saved {len(results.prompt)} rollouts to {rollouts_dir}")
 
 
 def load_endpoints(endpoints_path: str):
@@ -223,6 +328,7 @@ def save_results(
     results: GenerateOutputs,
     push_to_hf_hub: bool = False,
     hf_hub_dataset_name: str | None = None,
+    save_images: bool = True,
 ):
     path_to_save = results.metadata.path_to_save
     path_to_save.parent.mkdir(parents=True, exist_ok=True)
@@ -230,6 +336,10 @@ def save_results(
     metadata_dict = sanitize_metadata(results.metadata)
     save_to_disk(dataset, metadata_dict, path_to_save)
     logger.info(f"Results saved to {path_to_save}")
+    
+    # Save rollouts with images for multimodal debugging
+    save_rollout_with_images(results, path_to_save, save_images=save_images)
+    
     if push_to_hf_hub:
         dataset_name = hf_hub_dataset_name or get_hf_hub_dataset_name(results)
         dataset.push_to_hub(dataset_name)

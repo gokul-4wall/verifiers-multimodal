@@ -9,6 +9,59 @@ from openai.types.completion_choice import CompletionChoice
 from verifiers.types import ChatMessage, Messages, MessageType, ModelResponse
 
 
+def message_to_dict(message: ChatMessage) -> dict:
+    """
+    Convert a message to a plain dict, preserving all content including images.
+    This handles Pydantic models and other complex types that don't deepcopy correctly.
+    """
+    result = {"role": message.get("role", "user")}
+    
+    content = message.get("content")
+    if content is None:
+        result["content"] = None
+    elif isinstance(content, str):
+        result["content"] = content
+    else:
+        # Convert each content item to plain dict
+        result["content"] = []
+        for c in content:
+            if isinstance(c, str):
+                result["content"].append({"type": "text", "text": c})
+            elif isinstance(c, dict):
+                result["content"].append(dict(c))  # Shallow copy
+            else:
+                # Handle Pydantic models or other objects
+                try:
+                    result["content"].append(dict(c))
+                except (TypeError, ValueError):
+                    # Fallback: try to convert via __dict__ or str
+                    if hasattr(c, "model_dump"):
+                        result["content"].append(c.model_dump())
+                    elif hasattr(c, "__dict__"):
+                        result["content"].append(dict(c.__dict__))
+                    else:
+                        result["content"].append({"type": "text", "text": str(c)})
+    
+    # Preserve other fields like tool_calls
+    if "tool_calls" in message:
+        result["tool_calls"] = message["tool_calls"]
+    if "name" in message:
+        result["name"] = message["name"]
+    if "tool_call_id" in message:
+        result["tool_call_id"] = message["tool_call_id"]
+    
+    return result
+
+
+def messages_to_dict(messages: Messages) -> list[dict]:
+    """
+    Convert messages to plain dicts, preserving all content including images.
+    """
+    if isinstance(messages, str):
+        return [{"role": "user", "content": messages}]
+    return [message_to_dict(m) for m in messages or []]
+
+
 def message_to_printable(message: ChatMessage) -> ChatMessage:
     """
     Removes image_url objects from message content.

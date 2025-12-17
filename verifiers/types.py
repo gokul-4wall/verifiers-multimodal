@@ -86,6 +86,9 @@ class GenerateOutputs(BaseModel):
     reward: list[float]
     metrics: dict[str, list[float]] = Field(default_factory=dict)
     metadata: GenerateMetadata
+    # Raw prompts with images (before cleanup) for multimodal logging
+    # Using Any type to avoid Pydantic validation converting content to ValidatorIterator
+    prompt_raw: Any = None
 
 
 class RolloutScore(BaseModel):
