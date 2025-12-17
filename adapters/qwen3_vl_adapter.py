@@ -27,9 +27,10 @@ class Qwen3VLAdapter(MultimodalAdapter):
     - image_grid_thw metadata for dynamic resolution
     """
     
-    def __init__(self, tokenizer: PreTrainedTokenizerBase, processor: Qwen2VLProcessor):
+    def __init__(self, tokenizer: PreTrainedTokenizerBase, processor: Qwen2VLProcessor, image_scale: float = 1.0):
         super().__init__(tokenizer)
         self.processor = processor
+        self.image_scale = image_scale  # Scale factor for resizing images (0.5 = half size)
         
     def _load_image(self, image_data: str | Image.Image | dict | None) -> Image.Image:
         """
@@ -81,6 +82,13 @@ class Qwen3VLAdapter(MultimodalAdapter):
         # Convert to RGB if needed
         if image.mode != 'RGB':
             image = image.convert('RGB')
+        
+        # Resize if scale factor is set
+        if self.image_scale != 1.0:
+            w, h = image.size
+            new_w = max(1, int(w * self.image_scale))
+            new_h = max(1, int(h * self.image_scale))
+            image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
         return image
     

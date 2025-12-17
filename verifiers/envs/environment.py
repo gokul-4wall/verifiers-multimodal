@@ -35,6 +35,7 @@ from verifiers.utils.eval_utils import make_dataset, save_results
 from verifiers.utils.message_utils import (
     cleanup_messages,
     get_overlong_prompt_dummy_response,
+    messages_to_dict,
 )
 from verifiers.utils.path_utils import get_results_path
 from verifiers.utils.processing_utils import (
@@ -535,6 +536,9 @@ class Environment(ABC):
             )
         if "example_id" not in results_dict and "id" in results_dict:
             results_dict["example_id"] = deepcopy(results_dict["id"])
+        # Store raw prompts with images before cleanup (for multimodal logging)
+        # Use messages_to_dict to properly convert Pydantic models to plain dicts
+        results_dict["prompt_raw"] = [messages_to_dict(p) for p in results_dict["prompt"]]
         results_dict["prompt"] = [cleanup_messages(p) for p in results_dict["prompt"]]
         n = len(results_dict["prompt"])
         results_dict["completion"] = [await self.init_completion() for _ in range(n)]
@@ -587,6 +591,7 @@ class Environment(ABC):
             reward=[0.0] * n,
             metrics={name: [0.0] * n for name in self.rubric.get_reward_func_names()},
             metadata=metadata,
+            prompt_raw=results_dict.get("prompt_raw"),  # Raw prompts with images
         )
         results.state = [
             await self.init_state(
