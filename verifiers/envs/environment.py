@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncContextManager, Literal
 
+import torch
 from datasets import Dataset
 from openai import AsyncOpenAI, BadRequestError, OpenAI
 
@@ -1084,6 +1085,22 @@ class Environment(ABC):
         all_image_grid_thw = []
         
         batch_size = len(mm_batch.input_ids)
+        
+        # For Qwen-VL, pixel_values has shape (total_patches, channels) where all patches
+        # are concatenated. We need to split them using image_grid_thw.
+        # Calculate patch ranges for each sample based on image_grid_thw
+        pixel_value_ranges = []
+        if mm_batch.pixel_values is not None and "image_grid_thw" in mm_batch.extra_model_kwargs:
+            grid_thw = mm_batch.extra_model_kwargs["image_grid_thw"]
+            if isinstance(grid_thw, torch.Tensor):
+                patch_start = 0
+                for i in range(len(grid_thw)):
+                    # Each image has t * h * w patches
+                    t, h, w = grid_thw[i].tolist()
+                    num_patches = t * h * w
+                    pixel_value_ranges.append((patch_start, patch_start + num_patches))
+                    patch_start += num_patches
+        
         for i in range(batch_size):
             # Get full sequence from adapter
             input_ids = mm_batch.input_ids[i].tolist()
@@ -1146,17 +1163,22 @@ class Environment(ABC):
                 all_rewards.append(mm_batch.rewards[i].item())
                 all_is_truncated.append(False)
             
-            # Extract multimodal data
-            if mm_batch.pixel_values is not None:
-                all_pixel_values.append(mm_batch.pixel_values[i])
+            # Extract multimodal data per sample
+            # For Qwen-VL: pixel_values is (total_patches, channels), use ranges to split
+            if mm_batch.pixel_values is not None and i < len(pixel_value_ranges):
+                start, end = pixel_value_ranges[i]
+                all_pixel_values.append(mm_batch.pixel_values[start:end])
             
             if "image_grid_thw" in mm_batch.extra_model_kwargs:
-                # Handle image_grid_thw (could be per-sample or batched)
                 grid_thw = mm_batch.extra_model_kwargs["image_grid_thw"]
-                if isinstance(grid_thw, list) and len(grid_thw) > i:
+                if isinstance(grid_thw, torch.Tensor) and i < len(grid_thw):
                     all_image_grid_thw.append(grid_thw[i])
-                elif isinstance(grid_thw, torch.Tensor):
-                    all_image_grid_thw.append(grid_thw[i])
+        
+        # Remove image_grid_thw from extra_model_kwargs since it's been extracted per-sample
+        if mm_batch.extra_model_kwargs:
+            cleaned_extra_kwargs = {k: v for k, v in mm_batch.extra_model_kwargs.items() if k != "image_grid_thw"}
+        else:
+            cleaned_extra_kwargs = {}
         
         return ProcessedOutputs(
             prompt_ids=all_prompt_ids,
@@ -1168,5 +1190,5 @@ class Environment(ABC):
             is_truncated=all_is_truncated,
             pixel_values=all_pixel_values if all_pixel_values else None,
             image_grid_thw=all_image_grid_thw if all_image_grid_thw else None,
-            extra_model_kwargs=mm_batch.extra_model_kwargs,
+            extra_model_kwargs=cleaned_extra_kwargs,  # Always pass dict (may be empty)
         )
